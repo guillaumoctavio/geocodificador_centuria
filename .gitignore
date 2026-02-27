@@ -1,0 +1,4 @@
+node_modules/
+.env
+jobs.json
+temp_results.csv
