@@ -1,19 +1,21 @@
 require('dotenv').config();
 const axios = require('axios');
 const fs = require('fs');
-const csv = require('csv-parser');
 const { Client } = require('pg');
 
 // =========================================================
-// ⚙️ CONFIGURACIÓN DE LA LOCALIDAD (Cambiar solo esto)
+// ⚙️ CONFIGURACIÓN DE LA LOCALIDAD
 // =========================================================
-const TABLA_DB = 'public.dim_geocoding_coronel_pringles'; // <-- Tu tabla en DBeaver
+const TABLA_DB = 'public.dim_geocoding_comuna_5';
 // =========================================================
 
 async function run() {
-    if (!fs.existsSync('jobs.json')) return console.error("Falta jobs.json");
-    const urls = JSON.parse(fs.readFileSync('jobs.json', 'utf-8'));
-    if (urls.length === 0) return console.log("No hay URLs para procesar.");
+    if (!fs.existsSync('jobs.json')) return console.error("❌ Falta jobs.json");
+    
+    let urls = JSON.parse(fs.readFileSync('jobs.json', 'utf-8'));
+    urls = urls.filter(u => u !== null); 
+    
+    if (urls.length === 0) return console.log("✅ No hay URLs para procesar en jobs.json.");
 
     const client = new Client({ 
         user: process.env.DB_USER, 
@@ -24,68 +26,77 @@ async function run() {
     });
     await client.connect();
 
-    const procesados = new Set();
     let activo = true;
 
     while (activo) {
-        console.log(`⏳ Verificando estado de los lotes...`);
-        for (const url of urls) {
-            if (procesados.has(url)) continue;
-            try {
-                const res = await axios.get(url);
-                
-                if (res.data.status === 'completed') {
-                    console.log(`✅ Lote completado. Descargando y guardando en ${TABLA_DB}...`);
-                    
-                    // 1. Descargamos el CSV temporal
-                    const csvData = await axios.get(res.data.url);
-                    fs.writeFileSync('temp_results.csv', csvData.data);
-                    
-                    // 2. Leemos el CSV y lo guardamos en memoria (para no saturar la BD)
-                    const filas = [];
-                    await new Promise((resolve, reject) => {
-                        fs.createReadStream('temp_results.csv')
-                            .pipe(csv())
-                            .on('data', (fila) => filas.push(fila))
-                            .on('end', resolve)
-                            .on('error', reject);
-                    });
+        console.log(`\n⏳ Verificando estado de ${urls.length} lotes pendientes...`);
+        let pendientes = [];
 
-                    // 3. Procesamos los UPDATE uno por uno de forma segura usando la variable TABLA_DB
-                    for (const fila of filas) {
-                        if (fila.lat && fila.lon) {
-                            const geom = `POINT (${fila.lon} ${fila.lat})`;
+        for (const url of urls) {
+            try {
+                const urlConKey = url.includes('apiKey=') ? url : `${url}&apiKey=${process.env.GEOAPIFY_API_KEY}`;
+                
+                const res = await axios.get(urlConKey);
+                
+                if (res.status === 202) {
+                    console.log(`⏳ Lote aún en proceso en Geoapify...`);
+                    pendientes.push(url); 
+                } 
+                else if (res.status === 200 && Array.isArray(res.data)) {
+                    console.log(`✅ Lote completado. Guardando coordenadas en ${TABLA_DB}...`);
+                    
+                    const resultados = res.data;
+                    let count = 0;
+
+                    for (const item of resultados) {
+                        const direccionOriginal = item.query.text; 
+                        
+                        if (item.lat && item.lon) {
+                            const geom = `POINT (${item.lon} ${item.lat})`;
+                            
+                            // =========================================================
+                            // 🔴 CORRECCIÓN AQUÍ: ELIMINADO geom_qgis DEL UPDATE
+                            // =========================================================
                             await client.query(`
                                 UPDATE ${TABLA_DB} 
-                                SET latitud = $1, longitud = $2, geom = $3 
+                                SET latitud = $1, longitud = $2, 
+                                    geom = ST_GeomFromText($3, 4326)
                                 WHERE direccion_normalizada = $4
-                            `, [fila.lat, fila.lon, geom, fila.query]);
+                            `, [item.lat, item.lon, geom, direccionOriginal]);
+                            count++;
+                        } else {
+                            await client.query(`
+                                UPDATE ${TABLA_DB} 
+                                SET latitud = 0, longitud = 0 
+                                WHERE direccion_normalizada = $1
+                            `, [direccionOriginal]);
                         }
                     }
+                    console.log(`   -> Se actualizaron ${count} registros de este lote.`);
                     
-                    procesados.add(url);
-                    
-                } else if (res.data.status !== 'pending' && res.data.status !== 'processing') {
-                    console.log(`⚠️ Lote con estado inesperado: ${res.data.status}`);
-                    procesados.add(url);
+                } else {
+                    console.log(`⚠️ Estado inesperado del servidor: HTTP ${res.status}`);
+                    pendientes.push(url);
                 }
             } catch (err) { 
                 console.error("❌ Error de red al verificar URL:", err.message); 
+                pendientes.push(url); 
             }
         }
         
-        if (procesados.size === urls.length) {
+        urls = pendientes;
+        fs.writeFileSync('jobs.json', JSON.stringify(urls, null, 2));
+        
+        if (urls.length === 0) {
             activo = false;
         } else {
-            await new Promise(r => setTimeout(r, 60000)); // Espera 1 min
+            console.log("💤 Esperando 30 segundos antes de volver a consultar a Geoapify...");
+            await new Promise(r => setTimeout(r, 30000)); 
         }
     }
     
-    // Limpieza de archivos temporales
-    if (fs.existsSync('temp_results.csv')) fs.unlinkSync('temp_results.csv');
-    
     await client.end();
-    console.log(`🚀 ¡Geocodificación finalizada en la tabla ${TABLA_DB}!`);
+    console.log(`\n🚀 ¡Geocodificación 100% finalizada en la tabla ${TABLA_DB}!`);
 }
 
 run();

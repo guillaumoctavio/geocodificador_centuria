@@ -6,7 +6,7 @@ const { Client } = require('pg');
 // =========================================================
 // ⚙️ CONFIGURACIÓN DE LA LOCALIDAD (Cambiar solo esto)
 // =========================================================
-const TABLA_DB = 'public.dim_geocoding_coronel_pringles'; // <-- Tu tabla en DBeaver
+const TABLA_DB = 'public.dim_geocoding_comuna_5'; // <-- Tu tabla en DBeaver
 // =========================================================
 
 const TAMANO_LOTE = 1000;
@@ -31,6 +31,7 @@ async function run() {
             WHERE direccion_normalizada IS NOT NULL 
               AND direccion_normalizada != 'NO_GEOCODIFICABLE'
               AND latitud IS NULL
+            LIMIT 6000 -- <--- ¡ESTE ES TU FRENO DE MANO!
         `);
 
         const direcciones = res.rows.map(r => r.direccion_normalizada);
