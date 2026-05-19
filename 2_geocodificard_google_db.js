@@ -1,55 +1,40 @@
-require('dotenv').config();
 const axios = require('axios');
 const { Client } = require('pg');
+const { TABLA_DB, db } = require('./config.js');
 
-// =========================================================
-// ⚙️ CONFIGURACIÓN DE LA LOCALIDAD (Cambiar solo esto)
-// =========================================================
-const TABLA_DB = 'public.dim_geocoding_coronel_pringles'; // <-- Tu tabla en DBeaver
-// =========================================================
+if (!process.env.GOOGLE_MAPS_API_KEY) {
+    console.error('❌ Falta variable de entorno: GOOGLE_MAPS_API_KEY');
+    process.exit(1);
+}
 
 const API_KEY = process.env.GOOGLE_MAPS_API_KEY;
-
-// Función para pausar el script unos milisegundos y no saturar a Google
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const sleep   = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function run() {
-    const client = new Client({
-        user: process.env.DB_USER,
-        host: process.env.DB_HOST,
-        database: process.env.DB_NAME,
-        password: process.env.DB_PASSWORD,
-        port: process.env.DB_PORT,
-    });
+    const client = new Client(db);
 
     try {
         await client.connect();
-        console.log("✅ Conectado a PostgreSQL.");
+        console.log(`✅ Conectado a PostgreSQL. Tabla: ${TABLA_DB}`);
 
-        // 1. Buscamos direcciones válidas que no tengan latitud aún usando la variable TABLA_DB
         const res = await client.query(`
-            SELECT id_geocoding, direccion_normalizada 
-            FROM ${TABLA_DB} 
-            WHERE direccion_normalizada IS NOT NULL 
+            SELECT id_geocoding, direccion_normalizada
+            FROM ${TABLA_DB}
+            WHERE direccion_normalizada IS NOT NULL
               AND direccion_normalizada != 'NO_GEOCODIFICABLE'
               AND latitud IS NULL
         `);
 
         if (res.rows.length === 0) {
-            return console.log(`No hay direcciones pendientes por geocodificar en ${TABLA_DB}.`);
+            return console.log(`No hay direcciones pendientes en ${TABLA_DB}.`);
         }
 
-        console.log(`🚀 Iniciando geocodificación de ${res.rows.length} direcciones con Google Maps...`);
+        console.log(`🚀 Geocodificando ${res.rows.length} direcciones con Google Maps...`);
 
-        let procesadas = 0;
-        let exitosas = 0;
+        let procesadas = 0, exitosas = 0;
 
-        // 2. Iteramos una por una
-        for (let fila of res.rows) {
-            const id = fila.id_geocoding;
-            const direccion = fila.direccion_normalizada;
-            
-            // Codificamos la URL para que acepte espacios y acentos
+        for (const fila of res.rows) {
+            const { id_geocoding: id, direccion_normalizada: direccion } = fila;
             const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(direccion)}&key=${API_KEY}`;
 
             try {
@@ -57,39 +42,36 @@ async function run() {
                 const data = response.data;
 
                 if (data.status === 'OK' && data.results.length > 0) {
-                    const location = data.results[0].geometry.location;
-                    const lat = location.lat;
-                    const lon = location.lng;
-                    const tipoPrecision = data.results[0].geometry.location_type; // Ej: ROOFTOP, GEOMETRIC_CENTER
+                    const { lat, lng: lon } = data.results[0].geometry.location;
+                    const tipoPrecision     = data.results[0].geometry.location_type;
+                    const geomPoint         = `POINT (${lon} ${lat})`;
 
-                    // Armamos el texto para la columna geométrica (POINT lon lat)
-                    const geomPoint = `POINT (${lon} ${lat})`;
-
-                    // Actualizamos la base de datos inyectando la variable TABLA_DB
+                    // Guardar geom como geometry PostGIS real, no como texto
                     await client.query(`
                         UPDATE ${TABLA_DB}
-                        SET latitud = $1, longitud = $2, geom = $3
+                        SET latitud  = $1,
+                            longitud = $2,
+                            geom     = ST_GeomFromText($3, 4326)
                         WHERE id_geocoding = $4
                     `, [lat, lon, geomPoint, id]);
 
                     exitosas++;
-                    console.log(`[${procesadas + 1}/${res.rows.length}] ✅ Éxito: ${direccion} (${tipoPrecision})`);
+                    console.log(`[${procesadas + 1}/${res.rows.length}] ✅ ${direccion} (${tipoPrecision})`);
                 } else {
-                    console.log(`[${procesadas + 1}/${res.rows.length}] ⚠️ No encontrada: ${direccion} (Status: ${data.status})`);
+                    console.log(`[${procesadas + 1}/${res.rows.length}] ⚠️ No encontrada: ${direccion} (${data.status})`);
                 }
             } catch (apiError) {
-                console.error(`❌ Error en API con ${direccion}:`, apiError.message);
+                console.error(`❌ Error en API: ${direccion}:`, apiError.message);
             }
 
             procesadas++;
-            // Pausa de 50ms entre consultas para respetar el límite de Google (50 req/segundo)
-            await sleep(50); 
+            await sleep(50); // ~20 req/s, dentro del límite de Google
         }
 
-        console.log(`\n🎉 PROCESO FINALIZADO. Se geocodificaron ${exitosas} de ${res.rows.length} direcciones en ${TABLA_DB}.`);
+        console.log(`\n🎉 Finalizado. ${exitosas}/${res.rows.length} geocodificadas en ${TABLA_DB}.`);
 
     } catch (dbError) {
-        console.error("❌ Error de Base de Datos:", dbError.message);
+        console.error('❌ Error de BD:', dbError.message);
     } finally {
         await client.end();
     }

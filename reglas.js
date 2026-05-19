@@ -5,7 +5,7 @@ const correcciones = [
 
     // 2. DESTRUCCIÓN MASIVA DE "RUIDO" DE VIVIENDAS (Edificios, Torres, Deptos, Porterías)
     // Elimina la palabra clave y el número/letra asociado (ej: "TR 2", "PORT", "HAB 19", "DPTO 168")
-    [/\b(?:TR|T|TORRE|CPO|CUERPO|ED|EDIF|HAB|HB|PORT|PORTERIA|PLAN|MOD|DUP|DPX|CTFT|FRENTE|UF|UFUN|U|UN|LOC|TIM|TIMBRE|TMB|TB|PH|EP|DEPT|DTO|DT|DPTO|DPT|PISO|P|MZ|PC|CE|PLANTA ALTA|PL ALTA)\s*(?:[0-9]+[A-Z]*|[A-Z]+)?\b/g, ''],
+    [/\b(?:TORRE|CUERPO|PORTERIA|PLANTA ALTA|TIMBRE|EDIF|DPTO|DEPT|PISO|FRENTE|UFUN|PLAN|MOD|DUP|DPX|CTFT|PL ALTA|HAB|CPO|PORT|UF|DPT|LOC|TIM|TMB|ED|DTO|DT|HB|UN|PH|EP|PC|MZ|TB|TR|CE|PB|OF|UC|BK|P|T|U)\s*(?:[0-9]+[A-Z]*|[A-Z]+)?\b/g, ''],
     
     // Elimina torres con nombres pegados (ej: "TR MEDRANO")
     [/\bTR\s+[A-Z]+\b/g, ''],
