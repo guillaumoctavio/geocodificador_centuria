@@ -2,6 +2,8 @@
 
 Pipeline de geocodificación masiva de direcciones postales para la Ciudad Autónoma de Buenos Aires (CABA). Toma direcciones crudas almacenadas en PostgreSQL, las normaliza, las envía a una API de geocodificación y persiste las coordenadas junto con geometrías PostGIS reales.
 
+> **Estado (2026-11-13): reemplazado.** El Data Warehouse de Centuria ya no usa este programa: la geocodificación se hace con su propio paso 2 (`pipeline/step2_geocoding.py` en el repositorio `dw-electoral`). Este repositorio se conserva como referencia y sigue funcionando por separado.
+
 ## Flujos disponibles
 
 ```
@@ -35,7 +37,7 @@ cd geocodificador_centuria
 npm install
 ```
 
-Crear `.env` en la raíz de esta carpeta:
+Crear `.env` en la raíz de esta carpeta (copiando `.env.example`). Cómo obtener cada clave: `docs/instalacion/cuentas_y_claves.md` del repositorio `dw-electoral`.
 
 ```env
 # Base de datos
